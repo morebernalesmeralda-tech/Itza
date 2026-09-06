@@ -1,0 +1,376 @@
+import tkinter as tk,random,math
+
+root=tk.Tk();root.title("ZOMBIE SURVIVAL");root.attributes("-fullscreen",True)
+W,H=root.winfo_screenwidth(),root.winfo_screenheight()
+c=tk.Canvas(root,width=W,height=H,bg="#101820",highlightthickness=0);c.pack()
+
+jugador={"x":W//2,"y":H//2,"vida":100,"maxvida":100,"dinero":250,"arma":"Pistola","direccion":[1,0]}
+ARMAS={"Pistola":[0,14,12,12,18,"#f1c40f","normal"],"Escopeta":[150,12,6,28,14,"#e67e22","escopeta"],"Francotirador":[300,60,5,40,25,"#3498db","francotirador"],"Metralleta":[450,8,35,4,18,"#9b59b6","auto"],"Bazuca":[650,55,1,45,10,"#2ecc71","bazuca"],"Lanzallamas":[850,5,100,2,8,"#ff5722","llamas"]}
+ZOMBIS={"normal":[35,1.5,8,12,"#55d98b",19],"rapido":[28,3.4,10,20,"#f4d03f",17],"tanque":[110,.75,18,45,"#9b59b6",27],"gigante":[200,.55,25,90,"#c0392b",34],"lanzador":[70,.9,12,70,"#e67e22",21],"perro":[30,4.5,15,30,"#795548",17],"mutado":[150,1.2,22,100,"#8e44ad",25]}
+
+inventario={"Pistola":True};municion={n:a[2] for n,a in ARMAS.items()}
+oleada=0;tema="CIUDAD";momento="DIA";zombis=[];balas=[];particulas=[];obstaculos=[];teclas=set()
+tienda=False;juego_activo=True;disparando=False;cooldown=0;recargando=False;recarga_tiempo=0;mensaje="";mensaje_tiempo=0;mouse_x,mouse_y=W//2,H//2
+
+def distancia(a,b,x,y):return math.hypot(a-x,b-y)
+def mostrar_mensaje(t):
+ global mensaje,mensaje_tiempo
+ mensaje,mensaje_tiempo=t,80
+def rect_colision(x,y,r,o):return x+r>o["x1"] and x-r<o["x2"] and y+r>o["y1"] and y-r<o["y2"]
+def obstaculo(x,y,r):return any(rect_colision(x,y,r,o) for o in obstaculos)
+
+def posicion_libre(r=20,c=False):
+ for _ in range(500):
+  x=random.randint(max(40,W//2-150),min(W-40,W//2+150)) if c else random.randint(40,W-40)
+  y=random.randint(max(80,H//2-110),min(H-40,H//2+110)) if c else random.randint(80,H-40)
+  if not obstaculo(x,y,r):return x,y
+ return W//2,H//2
+
+def colocar_jugador():
+ x,y=posicion_libre(20,True);jugador["x"],jugador["y"]=x,y
+
+def colores_momento():
+ return {"DIA":{"fondo":"#70b7e8","suelo":"#6fa85b"},"TARDE":{"fondo":"#d98252","suelo":"#7c633e"},"NOCHE":{"fondo":"#10182e","suelo":"#18251d"}}[momento]
+
+def cambiar_tema():
+ global tema,momento
+ tema=["CIUDAD","BOSQUE","PARQUE","AEROPUERTO","GRANJA"][(oleada-1)//3%5]
+ momento=["DIA","TARDE","NOCHE"][(oleada-1)%3]
+ dibujar_escenario()
+
+def crear_obstaculos():
+ obstaculos.clear();tipos=["caja","barril","roca","auto","arbusto","valla","contenedor","fuego"]
+ m={"caja":(45,45,0),"barril":(35,45,0),"roca":(60,45,0),"auto":(100,50,0),"arbusto":(60,50,0),"valla":(100,20,0),"contenedor":(110,55,0),"fuego":(45,45,10)}
+ for _ in range(35):
+  for _ in range(60):
+   x=random.randint(50,max(51,W-120));y=random.randint(90,max(91,H-100));t=random.choice(tipos);an,al,d=m[t]
+   if distancia(x+an/2,y+al/2,W//2,H//2)<170:continue
+   o={"x1":x,"y1":y,"x2":x+an,"y2":y+al,"tipo":t,"daño":d}
+   if any(o["x1"]<q["x2"]+8 and o["x2"]>q["x1"]-8 and o["y1"]<q["y2"]+8 and o["y2"]>q["y1"]-8 for q in obstaculos):continue
+   obstaculos.append(o);break
+
+def dibujar_obstaculos():
+ for o in obstaculos:
+  x1,y1,x2,y2,t=[o[k] for k in("x1","y1","x2","y2")]+[o["tipo"]]
+  if t=="caja":
+   c.create_rectangle(x1,y1,x2,y2,fill="#8d6e63",outline="#4e342e",width=3,tags="escenario");c.create_line(x1,y1,x2,y2,fill="#5d4037",width=3,tags="escenario");c.create_line(x2,y1,x1,y2,fill="#5d4037",width=3,tags="escenario")
+  elif t=="barril":
+   c.create_oval(x1,y1,x2,y2,fill="#607d8b",outline="#263238",width=3,tags="escenario");c.create_line(x1+4,(y1+y2)/2,x2-4,(y1+y2)/2,fill="#263238",width=4,tags="escenario")
+  elif t=="roca":c.create_polygon(x1,y2,x1+10,y1+10,x1+35,y1,x2,y1+15,x2-5,y2,fill="#7f8c8d",outline="#34495e",width=3,tags="escenario")
+  elif t=="auto":
+   c.create_rectangle(x1,y1+10,x2,y2,fill="#34495e",outline="#17202a",width=3,tags="escenario");c.create_rectangle(x1+20,y1,x2-20,y1+25,fill="#607d8b",outline="",tags="escenario")
+   for wx in(x1+12,x2-12):c.create_oval(wx-8,y2-8,wx+8,y2+8,fill="#111",outline="",tags="escenario")
+  elif t=="arbusto":c.create_oval(x1,y1,x2,y2,fill="#176b35",outline="#0b4220",width=3,tags="escenario")
+  elif t=="valla":
+   c.create_rectangle(x1,y1,x2,y2,fill="#8d6e63",outline="#4e342e",tags="escenario")
+   for xx in range(int(x1),int(x2),25):c.create_rectangle(xx,y1-12,xx+6,y2+12,fill="#704214",outline="",tags="escenario")
+  elif t=="contenedor":
+   c.create_rectangle(x1,y1,x2,y2,fill="#2471a3",outline="#154360",width=4,tags="escenario")
+   for xx in range(int(x1+15),int(x2),20):c.create_line(xx,y1,xx,y2,fill="#1b4f72",width=2,tags="escenario")
+  else:
+   c.create_oval(x1,y1+25,x2,y2,fill="#222",outline="",tags="escenario");c.create_polygon((x1+x2)/2,y1-15,x1,y2,(x1+x2)/2,y2-12,x2,y2,fill="#e67e22",outline="",tags="escenario");c.create_polygon((x1+x2)/2,y1,x1+10,y2,(x1+x2)/2,y2-15,x2-10,y2,fill="#f1c40f",outline="",tags="escenario")
+
+def dibujar_escenario():
+ c.delete("escenario");co=colores_momento();c.create_rectangle(0,0,W,H,fill=co["fondo"],outline="",tags="escenario")
+ if momento=="DIA":c.create_oval(W-170,75,W-70,175,fill="#ffd54f",outline="#fff176",width=3,tags="escenario")
+ elif momento=="TARDE":c.create_oval(W-180,H-230,W-80,H-130,fill="#ff8c42",outline="#ffd180",width=3,tags="escenario")
+ else:
+  c.create_oval(W-180,70,W-90,160,fill="#e8eaf6",outline="#c5cae9",width=2,tags="escenario")
+  for _ in range(45):
+   x=random.randint(20,W-20);y=random.randint(65,H//2);c.create_oval(x,y,x+2,y+2,fill="white",outline="",tags="escenario")
+ if tema=="CIUDAD":
+  for x in range(0,W,140):
+   al=random.randint(130,260);c.create_rectangle(x,H//2-180,x+115,H//2-180+al,fill="#34495e" if momento!="NOCHE" else "#202b3b",outline="#17202a",tags="escenario")
+   for wx in range(x+15,x+100,28):
+    for wy in range(H//2-160,H//2-60,35):c.create_rectangle(wx,wy,wx+10,wy+14,fill="#bde3ff" if momento=="DIA" else "#f7dc6f",outline="",tags="escenario")
+  c.create_rectangle(0,H//2-90,W,H//2+90,fill="#252a30",outline="",tags="escenario");c.create_rectangle(W//2-90,0,W//2+90,H,fill="#252a30",outline="",tags="escenario")
+  for x in range(0,W,90):c.create_rectangle(x,H//2-4,x+45,H//2+4,fill="#eee",outline="",tags="escenario")
+  for y in range(0,H,90):c.create_rectangle(W//2-4,y,W//2+4,y+45,fill="#eee",outline="",tags="escenario")
+ elif tema in("BOSQUE","PARQUE"):
+  c.create_rectangle(0,0,W,H,fill=co["suelo"],outline="",tags="escenario")
+  if tema=="PARQUE":c.create_rectangle(0,H//2-55,W,H//2+55,fill="#c9b58a",outline="",tags="escenario");c.create_rectangle(W//2-55,0,W//2+55,H,fill="#c9b58a",outline="",tags="escenario")
+  for _ in range(50 if tema=="BOSQUE" else 25):
+   x=random.randint(30,W-30);y=random.randint(80,H-30)
+   if distancia(x,y,W//2,H//2)<160:continue
+   c.create_rectangle(x-7,y,x+7,y+55 if tema=="BOSQUE" else y+35,fill="#654321",outline="",tags="escenario");c.create_oval(x-35,y-35,x+35,y+25,fill="#123d23" if momento=="NOCHE" else "#1f7a3a",outline="",tags="escenario")
+ elif tema=="AEROPUERTO":
+  c.create_rectangle(0,0,W,H,fill="#626b72",outline="",tags="escenario");c.create_rectangle(0,H//2-150,W,H//2+150,fill="#292d30",outline="",tags="escenario")
+  for x in range(0,W,100):c.create_rectangle(x,H//2-6,x+50,H//2+6,fill="white",outline="",tags="escenario")
+ else:
+  c.create_rectangle(0,0,W,H,fill="#314d2d" if momento=="NOCHE" else "#78b84b",outline="",tags="escenario");c.create_polygon(W//2-90,0,W//2+90,0,W//2+250,H,W//2-250,H,fill="#b98b55",outline="",tags="escenario")
+  x,y=70,90;c.create_rectangle(x,y,x+180,y+130,fill="#a93226",outline="#641e16",width=4,tags="escenario");c.create_polygon(x-10,y,x+90,y-70,x+190,y,fill="#7b241c",outline="",tags="escenario")
+ if momento=="NOCHE":c.create_rectangle(0,0,W,H,fill="#0b1020",stipple="gray50",outline="",tags="escenario")
+ crear_obstaculos();dibujar_obstaculos()
+
+def mover_jugador():
+ if not juego_activo:return
+ v=5;dx=dy=0
+ if "w" in teclas or "Up" in teclas:dy-=v
+ if "s" in teclas or "Down" in teclas:dy+=v
+ if "a" in teclas or "Left" in teclas:dx-=v
+ if "d" in teclas or "Right" in teclas:dx+=v
+ if dx or dy:
+  d=math.hypot(dx,dy)
+  if d>v:dx,dy=dx/d*v,dy/d*v
+  jugador["direccion"]=[dx,dy]
+ nx,ny=jugador["x"]+dx,jugador["y"]+dy
+ if 18<nx<W-18 and not obstaculo(nx,jugador["y"],18):jugador["x"]=nx
+ if 70<ny<H-18 and not obstaculo(jugador["x"],ny,18):jugador["y"]=ny
+ for o in obstaculos:
+  if o["tipo"]=="fuego" and rect_colision(jugador["x"],jugador["y"],15,o):
+   jugador["vida"]-=.35;sangre(jugador["x"],jugador["y"],2)
+   if jugador["vida"]<=0:jugador["vida"]=0;perder();return
+
+def dibujar_jugador():
+ c.delete("jugador");x,y=jugador["x"],jugador["y"]
+ r=lambda a,b,d,e,**k:c.create_rectangle(a,b,d,e,tags="jugador",**k)
+ c.create_oval(x-22,y+18,x+22,y+29,fill="#000",outline="",tags="jugador");r(x-25,y-14,x-16,y+10,fill="#34495e",outline="#111");r(x-18,y-20,x+18,y+10,fill="#2980b9",outline="#111",width=2);r(x-13,y+3,x-3,y+26,fill="#263238",outline="");r(x+3,y+3,x+13,y+26,fill="#263238",outline="")
+ c.create_oval(x-15,y-48,x+15,y-18,fill="#f0c7a4",outline="#111",width=2,tags="jugador");c.create_arc(x-15,y-50,x+15,y-20,start=0,extent=180,fill="#352318",outline="#352318",tags="jugador")
+ for ex in(x-8,x+4):c.create_oval(ex,y-38,ex+4,y-34,fill="white",outline="",tags="jugador")
+ dx,dy=jugador["direccion"];d=max(1,math.hypot(dx,dy));dx/=d;dy/=d;a=jugador["arma"];L={"Pistola":28,"Escopeta":36,"Francotirador":60,"Metralleta":42,"Bazuca":45,"Lanzallamas":40};G={"Pistola":5,"Escopeta":7,"Francotirador":4,"Metralleta":6,"Bazuca":11,"Lanzallamas":8};ex=x+dx*L[a];ey=y-5+dy*L[a]
+ c.create_line(x,y-5,ex,ey,fill=ARMAS[a][5],width=G[a],tags="jugador")
+ if a=="Francotirador":c.create_oval(ex-6,ey-6,ex+6,ey+6,outline="#e74c3c",width=2,tags="jugador")
+ if a=="Lanzallamas":r(x-27,y-8,x-18,y+12,fill="#c0392b",outline="")
+
+def crear_zombi():
+ if oleada<3:t=random.choice(["normal","normal","rapido"])
+ elif oleada<6:t=random.choice(["normal","rapido","tanque"])
+ elif oleada<9:t=random.choice(["normal","rapido","tanque","lanzador","perro"])
+ else:t=random.choice(list(ZOMBIS))
+ vida,vel,dano,dinero,color,tam=ZOMBIS[t];vida+=oleada*5
+ lados=[(random.randint(30,W-30),75),(W-30,random.randint(80,H-30)),(random.randint(30,W-30),H-30),(30,random.randint(80,H-30))]
+ x,y=posicion_libre(25)
+ for _ in range(50):
+  sx,sy=random.choice(lados)
+  if not obstaculo(sx,sy,22) and distancia(sx,sy,jugador["x"],jugador["y"])>250:x,y=sx,sy;break
+ zombis.append({"x":x,"y":y,"tipo":t,"vida":vida,"maxvida":vida,"velocidad":vel,"daño":dano,"dinero":dinero,"color":color,"tamaño":tam,"ataque":0,"atascado":0,"pasando":0})
+
+def dibujar_zombis():
+ c.delete("zombi")
+ for z in zombis:
+  x,y,s,t=z["x"],z["y"],z["tamaño"],z["tipo"];c.create_oval(x-s,y+s-3,x+s,y+s+6,fill="#111",outline="",tags="zombi")
+  if t=="perro":
+   c.create_oval(x-s-5,y-8,x+s+8,y+14,fill=z["color"],outline="#321f18",width=2,tags="zombi");c.create_oval(x+5,y-20,x+25,y,fill=z["color"],outline="",tags="zombi");c.create_oval(x+12,y-12,x+16,y-8,fill="#ff3030",outline="",tags="zombi")
+  elif t=="mutado":
+   c.create_oval(x-s-4,y-5,x+s+4,y+s+15,fill="#71368a",outline="#24112d",width=3,tags="zombi");c.create_oval(x-s-4,y-s*2,x+s+7,y,fill="#8e44ad",outline="#24112d",width=3,tags="zombi");c.create_oval(x-14,y-s-8,x-4,y-s+2,fill="#ff3030",outline="#111",tags="zombi");c.create_oval(x+5,y-s-12,x+16,y-s-1,fill="#f1c40f",outline="#111",tags="zombi")
+   for lado,arriba in[(-1,-1),(-1,1),(1,-1),(1,1),(-1,0),(1,0)]:
+    sx,sy=x+lado*8,y+arriba*4;ex,ey=x+lado*random.randint(30,45),y+random.randint(-35,35);c.create_line(sx,sy,x+lado*25,y+random.randint(-25,25),ex,ey,fill="#a569bd",width=7,smooth=True,tags="zombi");c.create_oval(ex-4,ey-4,ex+4,ey+4,fill="#c084dc",outline="",tags="zombi")
+  else:
+   c.create_rectangle(x-s,y-s+5,x+s,y+s,fill=z["color"],outline="#172018",width=2,tags="zombi");c.create_oval(x-s,y-s*2,x+s,y,fill=z["color"],outline="#172018",width=2,tags="zombi")
+   c.create_oval(x-s+5,y-s-8,x-s+11,y-s+1,fill="#ff3030",outline="",tags="zombi");c.create_oval(x+s-11,y-s-8,x+s-5,y-s+1,fill="#ff3030",outline="",tags="zombi")
+   if t=="tanque":c.create_oval(x-s-5,y-s*2-5,x+s+5,y+s+5,outline="#d5a6e6",width=4,tags="zombi");c.create_line(x-s,y,x-s-20,y+25,fill=z["color"],width=10,tags="zombi");c.create_line(x+s,y,x+s+20,y+25,fill=z["color"],width=10,tags="zombi")
+   elif t=="gigante":c.create_line(x-s,y-5,x-s-25,y+35,fill=z["color"],width=12,tags="zombi");c.create_line(x+s,y-5,x+s+25,y+35,fill=z["color"],width=12,tags="zombi");c.create_oval(x-10,y-s*2-10,x+10,y-s*2+10,fill="#ff3030",outline="",tags="zombi")
+   elif t=="lanzador":c.create_oval(x-8,y+5,x+8,y+20,fill="#f1c40f",outline="#7d6608",width=2,tags="zombi")
+  an=max(25,s*2);p=max(0,min(1,z["vida"]/max(1,z["maxvida"])));c.create_rectangle(x-an/2,y-s*2-14,x+an/2,y-s*2-8,fill="#421414",outline="",tags="zombi");c.create_rectangle(x-an/2,y-s*2-14,x-an/2+an*p,y-s*2-8,fill="#27ae60",outline="",tags="zombi")
+
+def mover_zombis():
+ for z in zombis:
+  if z["pasando"]>0:
+   z["pasando"]-=1;dx,dy=jugador["x"]-z["x"],jugador["y"]-z["y"];d=max(1,math.hypot(dx,dy));z["x"]+=dx/d*z["velocidad"];z["y"]+=dy/d*z["velocidad"];z["x"]=max(20,min(W-20,z["x"]));z["y"]=max(70,min(H-20,z["y"]))
+   if z["pasando"]<=0:z["atascado"]=0
+   continue
+  dx,dy=jugador["x"]-z["x"],jugador["y"]-z["y"];ang=math.atan2(dy,dx);v=z["velocidad"];aa=[ang,ang+.35,ang-.35,ang+.7,ang-.7,ang+1.1,ang-1.1,ang+1.5,ang-1.5,ang+math.pi/2,ang-math.pi/2];mejor=None;md=float("inf");r=z["tamaño"]*.65
+  for a in aa:
+   nx,ny=z["x"]+math.cos(a)*v,z["y"]+math.sin(a)*v
+   if 20<nx<W-20 and 70<ny<H-20 and not obstaculo(nx,ny,r):
+    nd=distancia(nx,ny,jugador["x"],jugador["y"])
+    if nd<md:md=nd;mejor=(nx,ny)
+  if mejor:z["x"],z["y"]=mejor;z["atascado"]=max(0,z["atascado"]-2)
+  else:
+   z["atascado"]+=1;a=ang+random.choice([-1.6,-1.2,-.8,.8,1.2,1.6]);nx,ny=z["x"]+math.cos(a)*v,z["y"]+math.sin(a)*v
+   if 20<nx<W-20 and 70<ny<H-20 and not obstaculo(nx,ny,r):z["x"],z["y"]=nx,ny
+   if z["atascado"]>=60:z["pasando"]=25;z["atascado"]=0
+  if distancia(z["x"],z["y"],jugador["x"],jugador["y"])<z["tamaño"]+20:
+   jugador["vida"]-=z["daño"]*.02
+   if random.random()<.08:sangre(jugador["x"],jugador["y"],4)
+   if jugador["vida"]<=0:jugador["vida"]=0;perder();return
+
+def part(x,y,dx,dy,vida,color):particulas.append({"x":x,"y":y,"dx":dx,"dy":dy,"vida":vida,"color":color})
+def sangre(x,y,n=10):
+ for _ in range(n):
+  a=random.random()*math.pi*2;v=random.uniform(1,4);part(x,y,math.cos(a)*v,math.sin(a)*v,random.randint(8,18),random.choice(["#9b1c1c","#b22222","#7f1010"]))
+def impacto_obstaculo(x,y):
+ for _ in range(10):
+  a=random.random()*math.pi*2;v=random.uniform(1,4);part(x,y,math.cos(a)*v,math.sin(a)*v,random.randint(5,12),random.choice(["#fff","#f1c40f","#bdc3c7"]))
+def efecto_disparo(x,y,dx,dy,color):
+ part(x+dx*10,y+dy*10,0,0,5,"white")
+ for _ in range(5):
+  a=math.atan2(dy,dx)+random.uniform(-.5,.5);part(x,y,math.cos(a)*random.uniform(2,5),math.sin(a)*random.uniform(2,5),8,color)
+def explosion(x,y):
+ for _ in range(35):
+  a=random.random()*math.pi*2;v=random.uniform(2,7);part(x,y,math.cos(a)*v,math.sin(a)*v,random.randint(10,25),random.choice(["#f1c40f","#e67e22","#e74c3c","#fff"]))
+def actualizar_particulas():
+ for p in particulas[:]:
+  p["x"]+=p["dx"];p["y"]+=p["dy"];p["dy"]+=.08;p["vida"]-=1
+  if p["vida"]<=0:particulas.remove(p)
+def dibujar_particulas():
+ c.delete("particula")
+ for p in particulas:c.create_oval(p["x"]-3,p["y"]-3,p["x"]+3,p["y"]+3,fill=p["color"],outline="",tags="particula")
+
+def disparar(e=None):
+ global cooldown
+ if not juego_activo or tienda or recargando or cooldown>0:return
+ n=jugador["arma"];a=ARMAS[n]
+ if municion[n]<=0:mostrar_mensaje("SIN MUNICION - PRESIONA R");return
+ dx=(e.x if e else mouse_x)-jugador["x"];dy=(e.y if e else mouse_y)-jugador["y"];d=max(1,math.hypot(dx,dy));dx/=d;dy/=d;jugador["direccion"]=[dx,dy];tipo=a[6]
+ if tipo=="llamas":
+  for _ in range(5):
+   q=math.atan2(dy,dx)+random.uniform(-.45,.45);balas.append({"x":jugador["x"]+dx*30,"y":jugador["y"]+dy*30,"dx":math.cos(q),"dy":math.sin(q),"daño":a[1],"velocidad":random.uniform(6,10),"vida":15,"tipo":"fuego","color":random.choice(["#ff5722","#ff9800","#f1c40f"])})
+ elif tipo=="escopeta":
+  for _ in range(7):
+   q=math.atan2(dy,dx)+random.uniform(-.3,.3);balas.append({"x":jugador["x"],"y":jugador["y"],"dx":math.cos(q),"dy":math.sin(q),"daño":a[1],"velocidad":a[4],"vida":35,"tipo":"normal","color":a[5]})
+ else:balas.append({"x":jugador["x"],"y":jugador["y"],"dx":dx,"dy":dy,"daño":a[1]*2 if tipo=="francotirador" else a[1],"velocidad":a[4],"vida":80,"tipo":tipo,"color":a[5]})
+ municion[n]-=1;efecto_disparo(jugador["x"],jugador["y"],dx,dy,a[5]);cooldown=a[3]
+
+def comprobar_bala_obstaculo(ox,oy,nx,ny,r=4):
+ for i in range(1,max(1,int(math.hypot(nx-ox,ny-oy)/4))+1):
+  t=i/max(1,int(math.hypot(nx-ox,ny-oy)/4));x=ox+(nx-ox)*t;y=oy+(ny-oy)*t
+  if any(rect_colision(x,y,r,o) for o in obstaculos):return x,y,True
+ return nx,ny,False
+
+def actualizar_balas():
+ for b in balas[:]:
+  ox,oy=b["x"],b["y"];nx=ox+b["dx"]*b["velocidad"];ny=oy+b["dy"]*b["velocidad"]
+  if not b.get("enemiga"):
+   hx,hy,g=comprobar_bala_obstaculo(ox,oy,nx,ny)
+   if g:impacto_obstaculo(hx,hy);balas.remove(b);continue
+  b["x"],b["y"]=nx,ny;b["vida"]-=1
+  if b["vida"]<=0 or not(-100<b["x"]<W+100 and -100<b["y"]<H+100):balas.remove(b);continue
+  if b.get("enemiga"):
+   if distancia(b["x"],b["y"],jugador["x"],jugador["y"])<22:
+    jugador["vida"]-=b["daño"];sangre(jugador["x"],jugador["y"],8);balas.remove(b)
+    if jugador["vida"]<=0:jugador["vida"]=0;perder();return
+   continue
+  for z in zombis[:]:
+   if distancia(b["x"],b["y"],z["x"],z["y"])<z["tamaño"]+8:
+    if b["tipo"]=="bazuca":
+     explosion(b["x"],b["y"])
+     for zz in zombis[:]:
+      if distancia(b["x"],b["y"],zz["x"],zz["y"])<115:zz["vida"]-=b["daño"];sangre(zz["x"],zz["y"],5);matar_zombi(zz) if zz["vida"]<=0 else None
+    else:z["vida"]-=b["daño"];sangre(z["x"],z["y"],5);matar_zombi(z) if z["vida"]<=0 else None
+    if b in balas:balas.remove(b)
+    break
+
+def dibujar_balas():
+ c.delete("bala")
+ for b in balas:
+  r=9 if b["tipo"]=="bazuca" else 7 if b["tipo"]=="fuego" else 4;c.create_oval(b["x"]-r,b["y"]-r,b["x"]+r,b["y"]+r,fill=b["color"],outline="white" if b["tipo"]=="bazuca" else "",tags="bala")
+
+def controlar_lanzadores():
+ for z in zombis:
+  if z["tipo"]!="lanzador":continue
+  if z["ataque"]>0:z["ataque"]-=1;continue
+  d=distancia(z["x"],z["y"],jugador["x"],jugador["y"])
+  if 100<d<500:
+   balas.append({"x":z["x"],"y":z["y"],"dx":(jugador["x"]-z["x"])/d,"dy":(jugador["y"]-z["y"])/d,"daño":8,"velocidad":5,"vida":120,"tipo":"lanzador","enemiga":True,"color":"#e67e22"});z["ataque"]=100
+
+def matar_zombi(z):
+ if z in zombis:sangre(z["x"],z["y"],12);jugador["dinero"]+=z["dinero"];zombis.remove(z)
+
+def recargar():
+ global recargando,recarga_tiempo
+ if tienda or not juego_activo or recargando:return
+ n=jugador["arma"]
+ if municion[n]<ARMAS[n][2]:recargando=True;recarga_tiempo=45;mostrar_mensaje("RECARGANDO...")
+
+def actualizar_recarga():
+ global recargando,recarga_tiempo
+ if recargando:
+  recarga_tiempo-=1
+  if recarga_tiempo<=0:
+   n=jugador["arma"];municion[n]=ARMAS[n][2];recargando=False;mostrar_mensaje("RECARGADO")
+
+def abrir_tienda():
+ global tienda
+ tienda=not tienda
+ if tienda:dibujar_tienda()
+ else:c.delete("tienda")
+
+def comprar(n):
+ precio=ARMAS[n][0]
+ if inventario.get(n):jugador["arma"]=n;municion[n]=ARMAS[n][2];mostrar_mensaje("ARMA EQUIPADA: "+n);abrir_tienda();return
+ if jugador["dinero"]<precio:mostrar_mensaje("NO TIENES SUFICIENTE DINERO");return
+ jugador["dinero"]-=precio;inventario[n]=True;jugador["arma"]=n;municion[n]=ARMAS[n][2];mostrar_mensaje(n+" DESBLOQUEADA");abrir_tienda()
+
+def dibujar_tienda():
+ c.delete("tienda");x1=W//2-310;x2=W//2+310;y1=75;y2=H-70;c.create_rectangle(x1,y1,x2,y2,fill="#10151a",outline="#f1c40f",width=4,tags="tienda");c.create_text(W//2,y1+35,text="ARMERIA",fill="#f1c40f",font=("Arial",26,"bold"),tags="tienda")
+ for i,n in enumerate(ARMAS):
+  a=ARMAS[n];y=y1+75+i*75;des=inventario.get(n,False);estado="EQUIPADA" if n==jugador["arma"] else "DESBLOQUEADA" if des else "$"+str(a[0]);c.create_rectangle(x1+25,y,x2-25,y+58,fill="#263238",outline=a[5],width=3,tags="tienda");c.create_text(x1+55,y+29,text=f"{i+1}. {n}",fill="white",font=("Arial",14,"bold"),anchor="w",tags="tienda");c.create_text(x2-55,y+29,text=estado,fill="#2ecc71" if des else "#f1c40f",font=("Arial",12,"bold"),anchor="e",tags="tienda")
+ c.create_text(W//2,y2-28,text="1-6 Comprar / Equipar     B = Cerrar",fill="#bbb",font=("Arial",12),tags="tienda");c.tag_raise("tienda")
+
+def nueva_oleada():
+ global oleada
+ oleada+=1;cambiar_tema();colocar_jugador()
+ for _ in range(5+oleada*2):crear_zombi()
+ mostrar_mensaje(f"OLEADA {oleada} - {tema} - {momento}")
+
+def perder():
+ global juego_activo
+ if not juego_activo:return
+ juego_activo=False
+ for _ in range(50):part(jugador["x"]+random.randint(-20,20),jugador["y"]+random.randint(-20,20),random.uniform(-5,5),random.uniform(-5,5),random.randint(20,45),random.choice(["#8b0000","#a00000","#c00000","#5c0000"]))
+ c.delete("final");c.create_rectangle(0,0,W,H,fill="#050505",stipple="gray50",outline="",tags="final")
+ for _ in range(35):
+  x=random.randint(0,W);y=random.randint(0,H);r=random.randint(8,35);c.create_oval(x-r,y-r,x+r,y+r,fill="#650000",outline="",tags="final")
+ c.create_text(W//2+4,H//2-61,text="GAME OVER",fill="#250000",font=("Arial",58,"bold"),tags="final");c.create_text(W//2,H//2-65,text="GAME OVER",fill="#e74c3c",font=("Arial",58,"bold"),tags="final");c.create_text(W//2,H//2+5,text=f"OLEADA ALCANZADA: {oleada}",fill="white",font=("Arial",20,"bold"),tags="final");c.create_text(W//2,H//2+60,text="PRESIONA R PARA REINICIAR",fill="#f1c40f",font=("Arial",18,"bold"),tags="final");c.tag_raise("final")
+
+def reiniciar():
+ global juego_activo,oleada,tema,momento,tienda,recargando,cooldown,disparando
+ juego_activo=True;oleada=0;tema="CIUDAD";momento="DIA";tienda=False;recargando=False;cooldown=0;disparando=False;zombis.clear();balas.clear();particulas.clear();obstaculos.clear();inventario.clear();inventario["Pistola"]=True
+ for n in municion:municion[n]=ARMAS[n][2]
+ jugador.update({"x":W//2,"y":H//2,"vida":100,"dinero":250,"arma":"Pistola","direccion":[1,0]})
+ c.delete("final");c.delete("tienda");c.delete("escenario");nueva_oleada()
+
+def dibujar_hud():
+ c.delete("hud");c.create_rectangle(0,0,W,58,fill="#10151a",outline="",tags="hud");c.create_text(20,18,text="VIDA",fill="white",font=("Arial",11,"bold"),anchor="w",tags="hud");c.create_rectangle(70,10,270,30,fill="#451414",outline="",tags="hud");p=max(0,min(1,jugador["vida"]/100));c.create_rectangle(70,10,70+200*p,30,fill="#2ecc71",outline="",tags="hud");c.create_text(170,20,text=f"{int(jugador['vida'])}/100",fill="white",font=("Arial",10,"bold"),tags="hud");c.create_text(300,20,text=f"DINERO: ${jugador['dinero']}",fill="#f1c40f",font=("Arial",13,"bold"),tags="hud");c.create_text(W//2,20,text=f"OLEADA {oleada} | {tema}",fill="white",font=("Arial",14,"bold"),tags="hud");c.create_text(W//2,43,text=momento,fill={"DIA":"#f1c40f","TARDE":"#ff914d","NOCHE":"#8eb8ff"}[momento],font=("Arial",10,"bold"),tags="hud");n=jugador["arma"];c.create_text(W-260,20,text=n,fill=ARMAS[n][5],font=("Arial",13,"bold"),tags="hud");c.create_text(W-25,20,text=f"{municion[n]}/{ARMAS[n][2]}",fill="white",font=("Arial",13,"bold"),anchor="e",tags="hud")
+ texto="RECARGANDO..." if recargando else mensaje if mensaje_tiempo>0 else ""
+ if texto:c.create_text(W//2,85,text=texto,fill="#f1c40f",font=("Arial",18,"bold"),tags="hud")
+ c.create_text(W//2,H-20,text="WASD/FLECHAS: Mover   CLICK: Disparar   R: Recargar   B: Tienda   ESC: Salir",fill="#ddd",font=("Arial",10),tags="hud")
+
+def tecla_presionada(e):
+ global disparando
+ k=e.keysym;teclas.add(k)
+ if k.lower() in "wasd":teclas.add(k.lower())
+ if k.lower()=="b" and juego_activo:abrir_tienda()
+ if k.lower()=="r":recargar() if juego_activo else reiniciar()
+ if k=="Escape":root.destroy()
+ if tienda and k in "123456":comprar({"1":"Pistola","2":"Escopeta","3":"Francotirador","4":"Metralleta","5":"Bazuca","6":"Lanzallamas"}[k])
+
+def tecla_soltada(e):teclas.discard(e.keysym);teclas.discard(e.keysym.lower())
+
+def mover_mouse(e):
+ global mouse_x,mouse_y
+ mouse_x,mouse_y=e.x,e.y
+ if juego_activo:
+  dx,dy=e.x-jugador["x"],e.y-jugador["y"];d=math.hypot(dx,dy)
+  if d>2:jugador["direccion"]=[dx/d,dy/d]
+
+def mouse_presionado(e):
+ global disparando
+ disparando=True;disparar(e)
+
+def mouse_soltado(e):
+ global disparando
+ disparando=False
+
+def disparo_automatico():
+ if disparando and juego_activo and not tienda and jugador["arma"] in["Metralleta","Lanzallamas"]:disparar()
+
+def actualizar():
+ global cooldown,mensaje_tiempo
+ if juego_activo and not tienda:
+  mover_jugador()
+  if cooldown>0:cooldown-=1
+  actualizar_recarga();mover_zombis()
+  if not juego_activo:
+   dibujar_jugador();dibujar_zombis();dibujar_balas();actualizar_particulas();dibujar_particulas();dibujar_hud();c.tag_raise("final");root.after(30,actualizar);return
+  controlar_lanzadores();actualizar_balas();actualizar_particulas();disparo_automatico()
+  if not zombis:nueva_oleada()
+ if mensaje_tiempo>0:mensaje_tiempo-=1
+ dibujar_jugador();dibujar_zombis();dibujar_balas();dibujar_particulas();dibujar_hud()
+ if tienda:c.tag_raise("tienda")
+ if not juego_activo:c.tag_raise("final")
+ root.after(30,actualizar)
+
+root.bind("<KeyPress>",tecla_presionada);root.bind("<KeyRelease>",tecla_soltada);c.bind("<Motion>",mover_mouse);c.bind("<ButtonPress-1>",mouse_presionado);c.bind("<ButtonRelease-1>",mouse_soltado)
+nueva_oleada();actualizar();root.mainloop()
